@@ -1,4 +1,5 @@
 import sys
+from functools import *
 import trimesh
 import numpy as np
 import random
@@ -8,42 +9,44 @@ def slice_mesh(mesh, normal, origin):
   return mesh.section(plane_origin=origin, plane_normal=normal)
 
 def export_polyline(path3d, filename):
-  polyline = []
-  v = 0
+  polylines = []
   for entity in path3d.entities:
+    polyline = []
     for index in entity.points:
       polyline.append(path3d.vertices[index])
-      v += 1
+    polylines.append(polyline)
 
-  write_polyline_ply(polyline, filename)
+  write_polyline_ply(polylines, filename)
 
-def write_polyline_ply(polyline, filename):
+def write_polyline_ply(polylines, filename):
+  n_vertices = reduce(lambda a,b: a+b, [(len(line) - 1) * 3 for line in polylines])
+  n_faces = reduce(lambda a,b: a+b, [(len(line) - 1) for line in polylines])
   with open(filename, "w") as file:
-    file.write("ply")
-    file.write("format ascii 1.0")
-    file.write("comment https://github.com/mikedh/trimesh")
-    file.write("element vertex " + str(len(polyline) * 3))
-    file.write("property float x")
-    file.write("property float y")
-    file.write("property float z")
-    file.write("element face " + str(len(polyline) - 1))
-    file.write("property list uchar int vertex_indices")
-    file.write("end_header")
-    v = 0
-    faces = []
+    file.write("ply\n")
+    file.write("format ascii 1.0\n")
+    file.write("comment https://github.com/mikedh/trimesh\n")
+    file.write("element vertex " + str(n_vertices) + '\n')
+    file.write("property float x\n")
+    file.write("property float y\n")
+    file.write("property float z\n")
+    file.write("element face " + str(n_faces) + '\n')
+    file.write("property list uchar int vertex_indices\n")
+    file.write("end_header\n")
     vertices = []
-    while v < len(polyline) - 1:
-      i1 = len(vertices)
-      i2 = len(vertices)
-      file.write("%d %d %d".format(*polyline[v + 1]))
-      i3 = len(vertices)
-      file.write("%d %d %d".format(*polyline[v]))
-      faces.append([i1, i2, i3])
-      v += 1
+    faces = []
+    for polyline in polylines:
+      for v in range(len(polyline) - 1):
+        i1 = len(vertices)
+        vertices.append(polyline[v])
+        i2 = len(vertices)
+        vertices.append(polyline[v + 1])
+        i3 = len(vertices)
+        vertices.append(polyline[v])
+        faces.append([i1, i2, i3])
     for vertex in vertices:
-      file.write("%d %d %d".format(*vertex))
+      file.write("{} {} {}\n".format(*vertex))
     for face in faces:
-      file.write("3 %i %i %i".format(*face))
+      file.write("3 {} {} {}\n".format(*face))
 
 def produce_slices(mesh, _dir='x', n_slices=20, out_filename = 'output/slice'):
   bounds = trimesh.bounds.corners(mesh.bounding_box.bounds)
@@ -68,8 +71,7 @@ def produce_slices(mesh, _dir='x', n_slices=20, out_filename = 'output/slice'):
     export_polyline(path3d, "polyline_" + str(n) + ".ply")
     path, _ = path3d.to_planar()
     filename = out_filename + '_' + str(n) + '.svg'
-    abirt
-    # trimesh.path.exchange.export.export_path(path, file_type='svg', file_obj=filename)
+    trimesh.path.exchange.export.export_path(path, file_type='svg', file_obj=filename)
 
 if __name__ == "__main__":
   produce_slices(trimesh.load_mesh(sys.argv[1]))
