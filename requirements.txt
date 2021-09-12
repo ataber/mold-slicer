@@ -1,0 +1,5 @@
+shapely
+trimesh
+Pillow
+scipy
+numpy
