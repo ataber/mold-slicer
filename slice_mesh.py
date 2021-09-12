@@ -1,6 +1,7 @@
 import sys
 from functools import *
 import trimesh
+import trimesh.transformations as transformations
 import numpy as np
 import random
 from shapely.geometry import LineString
@@ -24,7 +25,6 @@ def write_polyline_ply(polylines, filename):
   with open(filename, "w") as file:
     file.write("ply\n")
     file.write("format ascii 1.0\n")
-    file.write("comment https://github.com/mikedh/trimesh\n")
     file.write("element vertex " + str(n_vertices) + '\n')
     file.write("property float x\n")
     file.write("property float y\n")
@@ -48,30 +48,71 @@ def write_polyline_ply(polylines, filename):
     for face in faces:
       file.write("3 {} {} {}\n".format(*face))
 
-def produce_slices(mesh, _dir='x', n_slices=20, out_filename = 'output/slice'):
-  bounds = trimesh.bounds.corners(mesh.bounding_box.bounds)
-  min_corner = bounds[0,:]
-  max_corner = bounds[6,:]
+def rotation_matrix_from_vectors(vec1, vec2):
+  """ Find the rotation matrix that aligns vec1 to vec2
+  :param vec1: A 3d "source" vector
+  :param vec2: A 3d "destination" vector
+  :return mat: A transform matrix (3x3) which when applied to vec1, aligns it with vec2.
+  """
+  a, b = (vec1 / np.linalg.norm(vec1)).reshape(3), (vec2 / np.linalg.norm(vec2)).reshape(3)
+  v = np.cross(a, b)
+  c = np.dot(a, b)
+  s = np.linalg.norm(v)
+  kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+  rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
+  return rotation_matrix
+
+def produce_slices(mesh, _dir=2, n_slices=40, out_dir='output', negative=True):
+  bnds = trimesh.bounds.corners(mesh.bounding_box.bounds)
+  min_corner = bnds[0,:]
+  max_corner = bnds[6,:]
 
   direction = np.array([0, 0, 0])
-  if _dir == 'x':
-    direction[0] = 1
-    step_size = (max_corner[0] - min_corner[0]) / (n_slices + 1)
-  elif _dir == 'y':
-    direction[1] = 1
-    step_size = (max_corner[1] - min_corner[1]) / (n_slices + 1)
+  direction[_dir] = 1
+  step_size = (max_corner[_dir] - min_corner[_dir]) / n_slices
+
+  if negative:
+    transform = transformations.translation_matrix((max_corner + min_corner) / 2)
+    box = trimesh.primitives.Box(extents=(max_corner - min_corner), transform=transform)
+    # reverse orientation
+    for face in mesh.faces:
+      tmp = face[0]
+      face[0] = face[1]
+      face[1] = tmp
+    mesh_to_slice = trimesh.util.concatenate([mesh, box])
   else:
-    direction[2] = 1
-    step_size = (max_corner[2] - min_corner[2]) / (n_slices + 1)
+    mesh_to_slice = mesh
 
   start = min_corner + (0.5 * step_size) * direction
   for n in range(n_slices):
-    origin = start + (n * step_size) * direction
-    path3d = slice_mesh(mesh, direction, origin)
-    export_polyline(path3d, "polyline_" + str(n) + ".ply")
+    slice_plane_origin = start + (n * step_size) * direction
+    path3d = slice_mesh(mesh_to_slice, direction, slice_plane_origin)
+    export_polyline(path3d, f'{out_dir}/polyline_{n}.ply')
     path, _ = path3d.to_planar()
-    filename = out_filename + '_' + str(n) + '.svg'
-    trimesh.path.exchange.export.export_path(path, file_type='svg', file_obj=filename)
+    trimesh.path.exchange.export.export_path(path, file_type='svg', file_obj=f'{out_dir}/slice_{n}.svg')
+
+    R = np.zeros((4, 4))
+    if _dir != 2:
+      rot = rotation_matrix_from_vectors(np.array([0, 0, 1]), direction)
+      R[0:3,0:3] = rot
+      R[3,3] = 1
+    else:
+      for i in range(4):
+        R[i,i] = 1 # Identity
+
+    centroid = np.zeros(3)
+    for v in path3d.vertices:
+      centroid += v
+    centroid /= len(path3d.vertices)
+    centroid[_dir] = min_corner[_dir]
+    T = transformations.translation_matrix(centroid + (n * step_size) * direction)
+    M = transformations.concatenate_matrices(R, T)
+
+    extrusion = path.extrude(step_size)
+    if type(extrusion) is list:
+      extrusion = trimesh.util.concatenate(extrusion)
+    extrusion.apply_transform(M)
+    trimesh.exchange.export.export_mesh(extrusion, file_type='ply', file_obj=f'{out_dir}/extrusion_{n}.ply')
 
 if __name__ == "__main__":
   produce_slices(trimesh.load_mesh(sys.argv[1]))
