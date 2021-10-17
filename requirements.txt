@@ -3,3 +3,4 @@ trimesh
 Pillow
 scipy
 numpy
+loguru
